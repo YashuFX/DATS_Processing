@@ -1,0 +1,23 @@
+syntax = "proto3";
+package must.events.v1;
+
+import "must/common/v1/identifiers.proto";
+import "must/common/v1/timestamps.proto";
+
+message PlatformEvent {
+  string event_id = 1;
+  must.common.v1.MustTimestamp timestamp = 2;
+  must.common.v1.SourceIdentifier source = 3;
+  EventSeverity severity = 4;
+  string event_type = 5;
+  string message = 6;
+  map<string, string> metadata = 7;
+}
+
+enum EventSeverity {
+  EVENT_SEVERITY_UNSPECIFIED = 0;
+  EVENT_SEVERITY_INFO = 1;
+  EVENT_SEVERITY_WARNING = 2;
+  EVENT_SEVERITY_ERROR = 3;
+  EVENT_SEVERITY_CRITICAL = 4;
+}

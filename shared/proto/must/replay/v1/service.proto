@@ -1,0 +1,73 @@
+syntax = "proto3";
+package must.replay.v1;
+
+import "must/telemetry/v1/envelope.proto";
+
+service ReplayService {
+  rpc LoadFile(LoadFileRequest) returns (LoadFileResponse);
+  rpc StartPlayback(StartPlaybackRequest) returns (StartPlaybackResponse);
+  rpc PausePlayback(PausePlaybackRequest) returns (PausePlaybackResponse);
+  rpc ResumePlayback(ResumePlaybackRequest) returns (ResumePlaybackResponse);
+  rpc SeekPlayback(SeekPlaybackRequest) returns (SeekPlaybackResponse);
+  rpc StopPlayback(StopPlaybackRequest) returns (StopPlaybackResponse);
+  rpc GetPlaybackStatus(GetPlaybackStatusRequest) returns (GetPlaybackStatusResponse);
+}
+
+message LoadFileRequest {
+  string file_path = 1;
+  string file_type = 2; // "binary" or "ccsds"
+  must.telemetry.v1.ProcessingStage target_stage = 3;
+}
+
+message LoadFileResponse {
+  bool success = 1;
+  string message = 2;
+  uint64 total_packets = 3;
+  uint64 duration_ns = 4;
+}
+
+message StartPlaybackRequest {
+  double speed = 1;
+  bool loop = 2;
+}
+
+message StartPlaybackResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message PausePlaybackRequest {}
+
+message PausePlaybackResponse {
+  bool success = 1;
+}
+
+message ResumePlaybackRequest {}
+
+message ResumePlaybackResponse {
+  bool success = 1;
+}
+
+message SeekPlaybackRequest {
+  uint64 target_timestamp_ns = 1;
+}
+
+message SeekPlaybackResponse {
+  bool success = 1;
+}
+
+message StopPlaybackRequest {}
+
+message StopPlaybackResponse {
+  bool success = 1;
+}
+
+message GetPlaybackStatusRequest {}
+
+message GetPlaybackStatusResponse {
+  string state = 1; // "IDLE", "READY", "RUNNING", "PAUSED", "STOPPED", "COMPLETED", "ERROR"
+  double speed = 2;
+  double progress = 3; // 0.0 to 1.0
+  uint64 packets_published = 4;
+  uint64 current_timestamp_ns = 5;
+}

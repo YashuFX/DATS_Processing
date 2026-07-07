@@ -1,0 +1,44 @@
+syntax = "proto3";
+package must.telemetry.v1;
+
+import "must/common/v1/identifiers.proto";
+import "must/common/v1/timestamps.proto";
+import "must/telemetry/v1/packet.proto";
+import "must/telemetry/v1/ccsds.proto";
+
+message TelemetryEnvelope {
+  string envelope_id = 1;
+  uint64 sequence_number = 2;
+  must.common.v1.SourceIdentifier source = 3;
+  must.common.v1.GroundStationIdentifier station = 4;
+  must.common.v1.MissionIdentifier mission = 5;
+  must.common.v1.SatelliteIdentifier satellite = 6;
+  must.common.v1.MustTimestamp original_timestamp = 7;
+  must.common.v1.MustTimestamp receive_timestamp = 8;
+  must.common.v1.MustTimestamp publish_timestamp = 9;
+  RawTelemetryPacket raw_packet = 10;
+  CcsdsPacketHeader ccsds_header = 11;
+  CcsdsSecondaryHeader ccsds_secondary = 12;
+  uint32 apid = 13;
+  uint32 vcid = 14;
+  ProcessingStage stage = 15;
+  map<string, string> annotations = 16;
+  QualityIndicator quality = 17;
+}
+
+enum ProcessingStage {
+  PROCESSING_STAGE_UNSPECIFIED = 0;
+  PROCESSING_STAGE_RAW = 1;
+  PROCESSING_STAGE_CCSDS_DECODED = 2;
+  PROCESSING_STAGE_ENGINEERING = 3;
+  PROCESSING_STAGE_VALIDATED = 4;
+  PROCESSING_STAGE_ARCHIVED = 5;
+}
+
+message QualityIndicator {
+  bool is_valid = 1;
+  bool crc_ok = 2;
+  bool timestamp_monotonic = 3;
+  bool sequence_continuous = 4;
+  repeated string warnings = 5;
+}

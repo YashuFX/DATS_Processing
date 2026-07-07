@@ -1,0 +1,39 @@
+syntax = "proto3";
+package must.telemetry.v1;
+
+message CcsdsPacketHeader {
+  uint32 version_number = 1;
+  PacketType packet_type = 2;
+  bool secondary_header_flag = 3;
+  uint32 apid = 4;
+  SequenceFlags sequence_flags = 5;
+  uint32 sequence_count = 6;
+  uint32 data_length = 7;
+}
+
+enum PacketType {
+  PACKET_TYPE_UNSPECIFIED = 0;
+  PACKET_TYPE_TM = 1;
+  PACKET_TYPE_TC = 2;
+}
+
+enum SequenceFlags {
+  SEQUENCE_FLAGS_UNSPECIFIED = 0;
+  SEQUENCE_FLAGS_CONTINUATION = 1;
+  SEQUENCE_FLAGS_FIRST = 2;
+  SEQUENCE_FLAGS_LAST = 3;
+  SEQUENCE_FLAGS_STANDALONE = 4;
+}
+
+message CcsdsSecondaryHeader {
+  uint64 coarse_time = 1;
+  uint32 fine_time = 2;
+  TimeCodeFormat format = 3;
+}
+
+enum TimeCodeFormat {
+  TIME_CODE_FORMAT_UNSPECIFIED = 0;
+  TIME_CODE_FORMAT_CUC = 1;
+  TIME_CODE_FORMAT_CDS = 2;
+  TIME_CODE_FORMAT_EPOCH_NS = 3;
+}

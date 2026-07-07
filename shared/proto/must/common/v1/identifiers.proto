@@ -1,0 +1,36 @@
+syntax = "proto3";
+package must.common.v1;
+
+message MissionIdentifier {
+  uint32 mission_id = 1;
+  string mission_name = 2;
+  string mission_code = 3;
+}
+
+message SatelliteIdentifier {
+  uint32 satellite_id = 1;
+  string satellite_name = 2;
+  uint32 norad_id = 3;
+}
+
+message GroundStationIdentifier {
+  uint32 station_id = 1;
+  string station_name = 2;
+  string station_code = 3;
+}
+
+message SourceIdentifier {
+  string source_id = 1;
+  SourceType source_type = 2;
+  string source_name = 3;
+}
+
+enum SourceType {
+  SOURCE_TYPE_UNSPECIFIED = 0;
+  SOURCE_TYPE_REPLAY = 1;
+  SOURCE_TYPE_TCP = 2;
+  SOURCE_TYPE_UDP = 3;
+  SOURCE_TYPE_SDR = 4;
+  SOURCE_TYPE_SERIAL = 5;
+  SOURCE_TYPE_GNU_RADIO = 6;
+}

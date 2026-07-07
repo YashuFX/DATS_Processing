@@ -1,0 +1,11 @@
+syntax = "proto3";
+package must.telemetry.v1;
+
+import "must/common/v1/timestamps.proto";
+
+message RawTelemetryPacket {
+  bytes data = 1;
+  uint32 data_length = 2;
+  must.common.v1.MustTimestamp receive_time = 3;
+  uint64 file_offset = 4;
+}

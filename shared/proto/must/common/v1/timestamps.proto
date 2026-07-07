@@ -1,0 +1,15 @@
+syntax = "proto3";
+package must.common.v1;
+
+message MustTimestamp {
+  uint64 nanos_since_epoch = 1;
+  TimestampSource source = 2;
+}
+
+enum TimestampSource {
+  TIMESTAMP_SOURCE_UNSPECIFIED = 0;
+  TIMESTAMP_SOURCE_ONBOARD = 1;
+  TIMESTAMP_SOURCE_GROUND = 2;
+  TIMESTAMP_SOURCE_REPLAY = 3;
+  TIMESTAMP_SOURCE_SYSTEM = 4;
+}

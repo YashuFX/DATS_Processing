@@ -1,0 +1,42 @@
+server:
+  rest:
+    host: "0.0.0.0"
+    port: 8080
+  grpc:
+    host: "0.0.0.0"
+    port: 50051
+
+replay:
+  default_speed: 1.0
+  max_speed: 32.0
+  io_buffer_size_bytes: 8388608  # 8 MB
+  drift_correction_enabled: true
+  drift_correction_interval_packets: 1000
+  max_packet_size_bytes: 65542
+  file_base_directory: "/data/telemetry"
+
+publisher:
+  downstream_address: "http://127.0.0.1:50052"
+  buffer_size: 1024
+  retry_attempts: 3
+  retry_delay_ms: 5000
+
+observability:
+  log_level: "info"
+  log_format: "json"
+  metrics_port: 9090
+
+mission:
+  mission_id: 1
+  mission_name: "Chandrayaan-3"
+  mission_code: "CY3"
+
+satellite:
+  satellite_id: 101
+  satellite_name: "CY3-Orbiter"
+  norad_id: 57437
+
+station:
+  station_id: 10
+  station_name: "ISRO ISTRAC"
+  station_code: "ISTRAC"
