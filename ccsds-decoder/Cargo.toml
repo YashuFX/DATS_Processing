@@ -1,0 +1,43 @@
+[package]
+name = "ccsds-decoder"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ccsds-decoder"
+path = "src/main.rs"
+
+[[bin]]
+name = "publish-test-envelope"
+path = "tools/publish_test_envelope.rs"
+
+[[bin]]
+name = "consume-decoded-envelope"
+path = "tools/consume_decoded_envelope.rs"
+
+[dependencies]
+# Concurrency and Async
+tokio = { version = "1.38", features = ["full"] }
+
+# Serialization & Protocols
+serde = { version = "1.0", features = ["derive"] }
+prost = "0.12"
+uuid = { version = "1.8", features = ["v4"] }
+
+# Message Bus (RabbitMQ)
+lapin = "2.3"
+amq-protocol = "7.0"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async traits & futures helper
+async-trait = "0.1"
+futures = "0.3"
+
+# Error handling
+thiserror = "1.0"
+
+[build-dependencies]
+tonic-build = "0.11"
