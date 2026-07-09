@@ -4,99 +4,60 @@
 |--------------------|------------------------------------------|
 | **Document ID**    | MUST-GW-DEP-006                          |
 | **Version**        | 1.0.0-DRAFT                             |
-| **Date**           | 2026-07-03                               |
+| **Date**           | 2026-07-09                               |
 | **Status**         | DRAFT — PENDING REVIEW                   |
 
 ---
 
-## 1. Multi-Stage Dockerfile
+## 1. Multi-Stage Dockerfile Reference
 
 ```dockerfile
 # =========================================================
 # Stage 1: Build Environment
 # =========================================================
-FROM golang:1.22-alpine AS builder
+FROM rust:1.75-slim AS builder
 
-# Install system dependencies needed for compiling
-RUN apk add --no-cache git make build-base
+WORKDIR /usr/src/app
 
-WORKDIR /app
+# Install system dependencies (e.g. protobuf compiler for tonic-build)
+RUN apt-get update && apt-get install -y protobuf-compiler && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency manifests first to leverage Docker layer caching
-COPY go.mod go.sum ./
-RUN go mod download
+# Copy workspace and manifests
+COPY Cargo.toml Cargo.lock ./
 
-# Copy source tree
+# Create dummy src file to cache dependencies
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release
+
+# Copy actual source files and build
 COPY . .
-
-# Compile optimized static binary
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-w -s -X main.version=1.0.0" \
-    -o /bin/telemetry-gateway \
-    cmd/gateway/main.go
+RUN touch src/main.rs && cargo build --release
 
 # =========================================================
-# Stage 2: Distroless Minimal Runtime Environment
+# Stage 2: Distroless Runtime Environment
 # =========================================================
-FROM gcr.io/distroless/static-debian12:latest
+FROM gcr.io/distroless/cc-debian12:latest
 
-# Expose HTTP, gRPC, and WebSocket ports
-EXPOSE 8080 9090
+# Expose gRPC Ingress port
+EXPOSE 50052
 
-# Copy compiled binary and default configuration
-COPY --from=builder /bin/telemetry-gateway /telemetry-gateway
-COPY --from=builder /app/configs/production.yaml /configs/production.yaml
+# Copy compiled binary
+COPY --from=builder /usr/src/app/target/release/telemetry-gateway /telemetry-gateway
 
-# Set container execution context
+# Set execution context
 USER 65534:65534
 ENTRYPOINT ["/telemetry-gateway"]
-CMD ["--config=/configs/production.yaml"]
 ```
 
 ---
 
-## 2. YAML Configuration
+## 2. Environment Configuration
 
-```yaml
-service:
-  name: "must-telemetry-gateway"
-  environment: "production"
-  version: "1.0.0"
-  log_level: "info" # debug, info, warn, error
+The Telemetry Gateway is configured primarily through environment variables:
 
-server:
-  http:
-    port: 8080
-    read_timeout_ms: 5000
-    write_timeout_ms: 10000
-  grpc:
-    port: 9090
-    max_concurrent_streams: 1000
-    keepalive_time_seconds: 30
-
-rabbitmq:
-  hosts: ["amqp://guest:guest@rabbitmq:5672/"]
-  connection_timeout_ms: 5000
-  heartbeat_seconds: 60
-  publish_confirm_timeout_ms: 1000
-  retry_limit: 3
-  backoff_multiplier_ms: 100
-
-buffer:
-  max_memory_bytes: 1610612736 # 1.5 GB
-  max_packets: 500000
-  spill_to_disk: false
-
-metrics:
-  enabled: true
-  path: "/metrics"
-  port: 8080
-
-tracing:
-  enabled: true
-  endpoint: "otel-collector:4317"
-  sample_rate: 0.1
-```
+| Environment Variable | Default Value | Description |
+|----------------------|---------------|-------------|
+| `AMQP_URL` | `amqp://guest:guest@127.0.0.1:5672/%2f` | RabbitMQ connection URL |
+| `RUST_LOG` | `info` | Logging verbosity filter (`debug`, `info`, `warn`, `error`) |
 
 ---
 
@@ -106,29 +67,27 @@ tracing:
 
 | Metric Name | Type | Labels | Description |
 |-------------|------|--------|-------------|
-| `gateway_packets_received_total` | Counter | `source_id`, `mission_code` | Total telemetry packets received. |
-| `gateway_packets_published_total` | Counter | `source_id`, `mission_code` | Total packets pushed to RabbitMQ. |
-| `gateway_packets_rejected_total` | Counter | `reason` | Count of rejected packets by validation rule. |
-| `gateway_processing_latency_seconds` | Histogram | `source_id` | End-to-end processing time in the gateway. |
-| `gateway_buffer_utilization_pct` | Gauge | None | Current memory queue saturation percentage. |
-| `gateway_active_sessions` | Gauge | None | Number of active ingestion sessions. |
-| `gateway_rabbitmq_connected` | Gauge | None | RabbitMQ connection status (1 = ok, 0 = lost). |
+| `gateway_packets_received_total` | Counter | `source_id` | Total telemetry packets received. |
+| `gateway_packets_published_total` | Counter | `source_id` | Total packets pushed to RabbitMQ. |
+| `gateway_packets_dropped_total` | Counter | `reason` | Count of dropped packets (e.g., validation failures). |
+| `gateway_processing_latency_seconds` | Histogram | None | Processing latency from source generation to Gateway publish. |
 
-### 3.2 Log Fields (Structured JSON via Zap)
+### 3.2 Log Fields (Structured JSON via `tracing-subscriber`)
 
 All logs outputted by the gateway contain these structured metadata fields:
-- `timestamp`: RFC3339Nan
-- `level`: Log level
-- `caller`: File path and line number
-- `message`: Log text
-- `service_name`: `must-telemetry-gateway`
-- `session_id`: Unique identifier (if inside a telemetry stream context)
+- `timestamp`: Log event execution time
+- `level`: Log level (INFO, WARN, ERROR)
+- `message`: Log text description
+- `target`: Rust module path
 - `source_id`: Telemetry source ID (if applicable)
-- `error_details`: Exception stack or native system message (if error level)
+- `key`: RabbitMQ routing key (on successful publication)
+- `envelope_id`: Unique UUID of the telemetry envelope
 
 ---
 
 ## 4. Kubernetes Probes
+
+For a gRPC-only service, liveness and readiness are validated via the standard gRPC Health Checking Protocol using the `grpc-health-probe` tool:
 
 ```yaml
 apiVersion: apps/v1
@@ -144,26 +103,16 @@ spec:
       - name: telemetry-gateway
         image: must/telemetry-gateway:1.0.0
         ports:
-        - containerPort: 8080
-          name: http
-        - containerPort: 9090
+        - containerPort: 50052
           name: grpc
-        startupProbe:
-          httpGet:
-            path: /health/startup
-            port: 8080
-          failureThreshold: 30
-          periodSeconds: 10
         livenessProbe:
-          httpGet:
-            path: /health/live
-            port: 8080
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        readinessProbe:
-          httpGet:
-            path: /health/ready
-            port: 8080
+          exec:
+            command: ["/bin/grpc-health-probe", "-addr=:50052"]
           initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          exec:
+            command: ["/bin/grpc-health-probe", "-addr=:50052"]
+          initialDelaySeconds: 5
           periodSeconds: 10
 ```

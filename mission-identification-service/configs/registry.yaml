@@ -1,0 +1,17 @@
+missions:
+  - id: 1
+    name: "Chandrayaan-3"
+    code: "cy3"
+    satellites:
+      - id: 101
+        name: "Propulsion Module"
+        norad_id: 57320
+        rules:
+          - source_id: "rss-replay"
+            apids: [42, 43, 44]
+      - id: 102
+        name: "Lander"
+        norad_id: 57321
+        rules:
+          - source_id: "rss-replay"
+            apids: [50, 51]

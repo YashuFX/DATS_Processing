@@ -48,14 +48,14 @@ The Gateway is the **security and normalization boundary** between external tele
 
 ---
 
-## 2. Framework Decision: Axum
+## 2. Framework Decision: Tonic
 
 | Candidate | Strengths | Weaknesses | Verdict |
 |-----------|-----------|------------|---------|
-| **Axum** | Native integration with Tokio runtime, Tower middleware ecosystem, type-safe routing, excellent integration with Tonic gRPC and Prometheus/OTel tracing | Learning curve for Rust-specific traits/types | **Selected** |
-| Actix-web | Extremely fast, mature actor-like framework | Relies on its own tokio wrapper/runtime versions, harder to share custom middleware with Tonic/Tower | Rejected |
+| **Tonic** | Native gRPC support, excellent integration with Tokio runtime, compiles Protobuf directly using prost/tonic-build | Learning curve for Rust-specific async traits/types | **Selected** |
+| grpc-rs | Wrapper around gRPC C Core | Requires external C dependencies, less idiomatic Rust | Rejected |
 
-**Why Axum wins:** The Gateway's REST API is low-volume (operator control). The hot path is gRPC ingestion → RabbitMQ publishing, where the HTTP framework is irrelevant. Choosing Actix-web at the cost of unified Tokio/Tower middleware compatibility would be an engineering misjudgment. Axum's compatibility with Tower middleware, Tonic gRPC, and standard Rust async tooling aligns perfectly with the rest of the MuST platform.
+**Why Tonic wins:** The Gateway's hot path is gRPC ingestion $\rightarrow$ RabbitMQ publishing. Tonic is the de facto standard gRPC framework in the Rust ecosystem, offering high throughput, minimal overhead, and full compatibility with the Tokio runtime and Tower middleware stack.
 
 ---
 
@@ -63,41 +63,34 @@ The Gateway is the **security and normalization boundary** between external tele
 
 ### 3.1 Layer Diagram
 
-```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    DRIVING ADAPTERS (Inbound)                       │
-│  ┌───────────────┐  ┌──────────────┐  ┌──────────────────────────┐ │
-│  │ gRPC Receiver │  │ REST API     │  │ WebSocket Status         │ │
-│  │ (Replay)      │  │ (Axum)       │  │                          │ │
-│  └───────┬───────┘  └──────┬───────┘  └───────────┬──────────────┘ │
-│          │                 │                      │                 │
-│          └─────────────────┼──────────────────────┘                 │
-│                            │                                        │
-│                    ┌───────▼───────┐                                │
-│                    │    PORTS      │ (IngestPort, ControlPort)      │
-│                    └───────┬───────┘                                │
-├────────────────────────────┼────────────────────────────────────────┤
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │ gRPC Receiver (Tonic)                                         │  │
+│  │ (Ingress endpoints)                                           │  │
+│  └───────────────────────┬──────────────────────────────────────┘  │
+│                          │                                          │
+│                          ▼                                          │
+│                  ┌───────────────┐                                  │
+│                  │    PORTS      │ (IngestPort)                     │
+│                  └───────┬───────┘                                  │
+├──────────────────────────┼──────────────────────────────────────────┤
 │                     APPLICATION LAYER                                │
-│  ┌─────────────────────────▼─────────────────────────────────┐      │
-│  │               Ingestion Orchestrator                       │      │
-│  │  ┌──────────────┐ ┌──────────────┐ ┌────────────────────┐│      │
-│  │  │  Validator   │ │  Enricher    │ │ Session Manager    ││      │
-│  │  └──────────────┘ └──────────────┘ └────────────────────┘│      │
-│  │  ┌──────────────┐ ┌──────────────┐                       │      │
-│  │  │Source Registry│ │ Statistics   │                       │      │
-│  │  └──────────────┘ └──────────────┘                       │      │
-│  └─────────────────────────┬─────────────────────────────────┘      │
-│                            │                                        │
-│                    ┌───────▼───────┐                                │
-│                    │    PORTS      │ (PublishPort, EventPort)       │
-│                    └───────┬───────┘                                │
-├────────────────────────────┼────────────────────────────────────────┤
+│  ┌───────────────────────▼────────────────────────────────────────┐  │
+│  │               Ingestion Orchestrator                           │  │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌────────────────────┐      │  │
+│  │  │  Validator   │ │  Enricher    │ │  Normalizer        │      │  │
+│  │  └──────────────┘ └──────────────┘ └────────────────────┘      │  │
+│  └───────────────────────┬────────────────────────────────────────┘  │
+│                          │                                          │
+│                  ┌───────▼───────┐                                  │
+│                  │    PORTS      │ (PublishPort, EventPort)         │
+│                  └───────┬───────┘                                  │
+├──────────────────────────┼──────────────────────────────────────────┤
 │                    DRIVEN ADAPTERS (Outbound)                        │
-│  ┌───────────────┐ ┌───────────────┐ ┌────────────┐                  │
-│  │ RabbitMQ      │ │ RabbitMQ      │ │ OTel       │                  │
-│  │ Publisher     │ │ Events        │ │ (Tracing)  │                  │
-│  │ Holy Grail    │ │ Gateway       │ │            │                  │
-│  └───────────────┘ └───────────────┘ └────────────┘                  │
+│  ┌───────────────────────────────┐                                  │
+│  │ RabbitMQ Publisher (lapin)    │                                  │
+│  └───────────────────────────────┘                                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -346,21 +339,21 @@ telemetry-gateway/
 ├── Cargo.toml                       # Build & Dependency configuration
 ├── build.rs                         # Tonic protobuf compilation script
 ├── src/
-│   ├── main.rs                      # Entry point: config, DI, server startup
+│   ├── main.rs                      # Entry point: logging, DI, server startup
+│   ├── api.rs                       # Auto-generated Protobuf bindings
 │   ├── domain/                      # Pure domain logic (no I/O, no frameworks)
 │   │   ├── mod.rs
 │   │   ├── models.rs                # TelemetryEnvelope, Session, SourceRegistration
 │   │   ├── validator.rs             # Packet validation logic
 │   │   ├── enricher.rs              # Envelope enrichment logic
+│   │   ├── normalizer.rs            # Envelope normalizer logic
+│   │   ├── router.rs                # Routing key construction logic
 │   │   ├── events.rs                # Domain event types
 │   │   └── errors.rs                # Domain error types
 │   │
 │   ├── application/                 # Use cases / orchestration
 │   │   ├── mod.rs
-│   │   ├── orchestrator.rs          # Ingestion Orchestrator
-│   │   ├── source_registry.rs       # Source registration management
-│   │   ├── session_manager.rs       # Session lifecycle
-│   │   └── statistics.rs            # Aggregated statistics
+│   │   └── orchestrator.rs          # Ingestion Orchestrator
 │   │
 │   ├── ports/                       # Interface definitions
 │   │   ├── mod.rs
@@ -377,46 +370,20 @@ telemetry-gateway/
 │       ├── mod.rs
 │       ├── inbound/
 │       │   ├── mod.rs
-│       │   ├── grpc/
-│       │   │   ├── mod.rs
-│       │   │   └── replay_receiver.rs  # Tonic gRPC server for Replay Simulator
-│       │   └── rest/
+│       │   └── grpc/
 │       │       ├── mod.rs
-│       │       ├── router.rs           # Axum router setup
-│       │       └── handlers.rs         # REST endpoint handlers
+│       │       └── replay_receiver.rs  # Tonic gRPC server for Replay Simulator
 │       └── outbound/
 │           ├── mod.rs
 │           └── rabbitmq/
 │               ├── mod.rs
-│               ├── publisher.rs        # Lapin telemetry publisher
-│               └── event_publisher.rs  # Lapin event publisher
+│               └── publisher.rs        # Lapin telemetry publisher
 │
 ├── configs/
-│   ├── default.yaml
-│   ├── development.yaml
-│   └── production.yaml
-│
+│   └── default.yaml
 ├── deployments/
-│   ├── Dockerfile
-│   └── docker-compose.yml
-│
-├── docs/                             # This documentation
-│
-├── scripts/
-│   └── test_publish.sh               # Smoke test script
-│
-└── tests/
-    ├── integration/
-    │   ├── mod.rs
-    │   ├── ingestion_test.rs
-    │   ├── rabbitmq_test.rs
-    │   └── api_test.rs
-    ├── mocks/
-    │   ├── mod.rs
-    │   ├── mock_publisher.rs
-    │   └── mock_source.rs
-    └── fixtures/
-        └── sample_envelopes.json
+│   └── Dockerfile
+└── docs/                             # This documentation
 ```
 
 ### Why This Structure (Rust-Specific)

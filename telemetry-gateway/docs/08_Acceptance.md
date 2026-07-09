@@ -15,17 +15,17 @@ Each high-level requirement defined in `01_SRS.md` must map to a verification me
 
 | Req ID | Target Description | Verification Method | Test Ref | Status |
 |--------|--------------------|---------------------|----------|--------|
-| GW-010 | Ingest from Replay | Demonstration | IT-201 | Pending |
-| GW-011 | TelemetrySource Abstraction | Review / Inspection | Code Audit | Pending |
-| GW-020 | Validate Non-empty Payload | Analysis | UT-101 | Pending |
-| GW-022 | Detect Duplicate Sequence | Demonstration | UT-104 | Pending |
-| GW-023 | Detect Sequence Gaps | Demonstration | UT-103 | Pending |
-| GW-030 | Monotonic Timestamping | Demonstration | UT-105 | Pending |
-| GW-040 | Publish to telemetry.raw | Demonstration | IT-201 | Pending |
-| GW-044 | RabbitMQ Auto-reconnect | Demonstration | IT-203 | Pending |
-| GW-046 | Backpressure on saturated buffer | Demonstration | IT-204 | Pending |
-| GW-052 | Operator force stop API | Demonstration | UT-107 | Pending |
-| GW-N011| P99 processing latency < 5ms | Measurement | Benchmarks | Pending |
+| GW-010 | Ingest from Replay | Demonstration | IT-201 | Verified |
+| GW-011 | TelemetrySource Abstraction | Review / Inspection | Code Audit | Verified |
+| GW-020 | Validate Non-empty Payload | Analysis | UT-101 | Verified |
+| GW-022 | Detect Duplicate Sequence | Demonstration | UT-104 | Verified |
+| GW-023 | Detect Sequence Gaps | Demonstration | UT-103 | Verified |
+| GW-030 | Monotonic Timestamping | Demonstration | UT-105 | Verified |
+| GW-040 | Publish to telemetry.raw | Demonstration | IT-201 | Verified |
+| GW-044 | RabbitMQ Auto-reconnect | Demonstration | IT-203 | Verified |
+| GW-046 | Backpressure on saturated buffer | Demonstration | IT-204 | Verified |
+| GW-052 | (DEFERRED) Operator force stop API | Demonstration | UT-107 | Deferred |
+| GW-N011| P99 processing latency < 5ms | Measurement | Benchmarks | Verified |
 
 ---
 

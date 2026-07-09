@@ -35,10 +35,9 @@ The existing Message Bus Design (MUST-BUS-003) shows sources publishing directly
 - Enrich packets with mission context, station identity, gateway sequence
 - Publish validated `TelemetryEnvelope` messages to RabbitMQ `telemetry.raw`
 - Publish platform events to RabbitMQ `must.events`
-- Track per-source and per-session statistics
-- REST API for source registration, status, and statistics
-- WebSocket endpoint for real-time status streaming
-- Prometheus metrics and health probes
+- Track per-source and per-session statistics (via logs/metrics)
+- gRPC Ingress API
+- Prometheus metrics and health probes (via gRPC/HTTP endpoint)
 
 ### 2.2 Out of Scope (Gateway MUST NOT)
 
@@ -60,11 +59,11 @@ The existing Message Bus Design (MUST-BUS-003) shows sources publishing directly
 | ID      | Requirement | Priority | Rationale |
 |---------|-------------|----------|-----------|
 | GW-010  | SHALL accept telemetry packets from the Replay Simulator via gRPC streaming | MUST | Primary source during development |
-| GW-011  | SHALL define a `TelemetrySource` interface that abstracts packet acquisition | MUST | Future sources (TCP, UDP, SDR) require zero gateway logic changes |
+| GW-011  | SHALL define a `TelemetrySource` abstraction in the inbound ports | MUST | Future sources (TCP, UDP, SDR) require zero gateway logic changes |
 | GW-012  | SHALL support multiple concurrent source connections | MUST | Multi-station tracking produces simultaneous feeds |
 | GW-013  | SHALL assign a unique session ID to each source connection | MUST | Enables per-session statistics and lifecycle tracking |
-| GW-014  | SHALL require source registration before accepting packets | MUST | Prevents unidentified sources from injecting packets |
-| GW-015  | SHALL support dynamic source registration and deregistration at runtime | MUST | Sources connect and disconnect during operations |
+| GW-014  | SHALL validate source configurations statically from startup configuration | MUST | Prevents unidentified sources from injecting packets (dynamic registration deferred) |
+| GW-015  | (DEFERRED) SHALL support dynamic source registration and deregistration at runtime | DEFERRED | Deferred to v2 |
 | GW-016  | SHALL detect source disconnection and emit a SourceDisconnected event | MUST | Operators need immediate visibility into source failures |
 | GW-017  | SHALL support future TCP, UDP, Serial, GNU Radio, and SDR sources without modifying business logic | MUST | TelemetrySource abstraction is the extension point |
 
@@ -112,17 +111,17 @@ The existing Message Bus Design (MUST-BUS-003) shows sources publishing directly
 |---------|-------------|----------|-----------|
 | GW-050  | SHALL maintain per-session statistics (packets received, published, rejected, errors) | MUST | Operational visibility |
 | GW-051  | SHALL detect session completion (source signals EOF) and emit SessionFinished | MUST | Session lifecycle tracking |
-| GW-052  | SHALL support operator-initiated session stop via REST API | MUST | Operators need to terminate runaway or stuck sessions |
-| GW-053  | SHALL support querying all active sessions via REST API | MUST | Dashboard integration |
+| GW-052  | (DEFERRED) SHALL support operator-initiated session stop via REST API | DEFERRED | Deferred to v2 |
+| GW-053  | (DEFERRED) SHALL support querying all active sessions via REST API | DEFERRED | Deferred to v2 |
 
 ### 3.6 API
 
 | ID      | Requirement | Priority | Rationale |
 |---------|-------------|----------|-----------|
-| GW-060  | SHALL expose REST API for source registration, status, and statistics | MUST | Operator and CI control interface |
-| GW-061  | SHALL expose WebSocket endpoint for real-time status streaming | SHOULD | Dashboard requires push-based status updates |
-| GW-062  | SHALL expose Prometheus metrics at /metrics | MUST | Standard observability |
-| GW-063  | SHALL expose health endpoints: /health/live, /health/ready, /health/startup | MUST | Kubernetes-compatible probes |
+| GW-060  | (DEFERRED) SHALL expose REST API for source registration, status, and statistics | DEFERRED | Deferred to v2 |
+| GW-061  | (DEFERRED) SHALL expose WebSocket endpoint for real-time status streaming | DEFERRED | Deferred to v2 |
+| GW-062  | SHALL expose Prometheus metrics | MUST | Standard observability |
+| GW-063  | SHALL expose health endpoints | MUST | Standard health probes |
 
 ---
 
@@ -150,9 +149,9 @@ The existing Message Bus Design (MUST-BUS-003) shows sources publishing directly
 
 | ID       | Requirement | Target |
 |----------|-------------|--------|
-| GW-N030  | Structured JSON logs via Zap | — |
-| GW-N031  | Prometheus metrics (15+ metrics defined in 06_Deployment) | — |
-| GW-N032  | OpenTelemetry distributed tracing | — |
+| GW-N030  | Structured JSON logs via `tracing` | — |
+| GW-N031  | Prometheus metrics (defined in 06_Deployment) | — |
+| GW-N032  | (DEFERRED) OpenTelemetry distributed tracing | — |
 | GW-N033  | Per-source, per-session, per-mission metric labels | — |
 
 ---
@@ -161,14 +160,14 @@ The existing Message Bus Design (MUST-BUS-003) shows sources publishing directly
 
 | ID      | Constraint | Rationale |
 |---------|------------|-----------|
-| GW-C001 | Language: Go (1.22+) | Team expertise, excellent concurrency primitives, fast compilation |
-| GW-C002 | HTTP Framework: Gin | See Architecture Document Section 2 for justification |
-| GW-C003 | Logging: Zap | Structured, high-performance logging standard for Go services |
-| GW-C004 | Tracing: OpenTelemetry | Vendor-neutral distributed tracing |
-| GW-C005 | Architecture: Hexagonal (Ports & Adapters) | Consistency with Replay Simulator; testability |
-| GW-C006 | Configuration: YAML with env var overrides | Platform standard |
+| GW-C001 | Language: Rust (2021 Edition) | Safety, performance, strict alignment with Replay Simulator |
+| GW-C002 | Framework: Tonic (gRPC) | Type-safe contract generation, high throughput |
+| GW-C003 | Logging: `tracing` subscriber | Structured, high-performance logging standard for Rust |
+| GW-C004 | (DEFERRED) Tracing: OpenTelemetry | Deferred to v2 |
+| GW-C005 | Architecture: Hexagonal (Ports & Adapters) | Domain isolation from transport frameworks |
+| GW-C006 | Configuration: Config file / environment overrides | Platform standard |
 | GW-C007 | Serialization: Protocol Buffers (shared contracts) | Platform standard (MUST-CONTRACTS-002) |
-| GW-C008 | Message Bus: RabbitMQ | Platform standard (ADR-001/006) |
+| GW-C008 | Message Bus: RabbitMQ (lapin) | Platform standard (ADR-001/006) |
 
 ---
 

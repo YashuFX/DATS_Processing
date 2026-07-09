@@ -1,0 +1,46 @@
+[package]
+name = "mission-identification-service"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mission-identification-service"
+path = "src/main.rs"
+
+[[bin]]
+name = "publish-decoded-envelope"
+path = "tools/publish_decoded_envelope.rs"
+
+[[bin]]
+name = "consume-identified-envelope"
+path = "tools/consume_identified_envelope.rs"
+
+[dependencies]
+# Concurrency and Async
+tokio = { version = "1.38", features = ["full"] }
+
+# Serialization & Protocols
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+prost = "0.12"
+uuid = { version = "1.8", features = ["v4"] }
+
+# Message Bus (RabbitMQ)
+lapin = "2.3"
+amq-protocol = "7.0"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+metrics = "0.22"
+metrics-exporter-prometheus = "0.15"
+
+# Async traits & futures helper
+async-trait = "0.1"
+futures = "0.3"
+
+# Error handling
+thiserror = "1.0"
+
+[build-dependencies]
+tonic-build = "0.11"

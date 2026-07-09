@@ -41,46 +41,47 @@ The Telemetry Gateway requires multi-layered validation to ensure near-zero pack
 
 ## 2. Unit Test Matrix
 
-Unit tests are written in native Go testing framework. No external systems (RabbitMQ, network endpoints) are accessed. Mocks are generated using `mockgen`.
+Unit tests are written using the standard Rust testing framework (`#[test]`). No external systems (RabbitMQ, network endpoints) are accessed. Mocks (if any) are written manually or using the `mockall` crate.
 
 | Test ID | Target Component | Input Conditions | Expected Outcome |
 |---------|------------------|------------------|------------------|
-| UT-101 | `Validator` | Empty payload in `raw_packet` | Reject with `EMPTY_PAYLOAD` reason. |
-| UT-102 | `Validator` | Correct envelope structure | Pass validation. |
-| UT-103 | `Validator` | Sequence gap (e.g., last=10, cur=12) | Set sequence_continuous flag = false in QualityIndicator. |
+| UT-101 | `Validator` | Empty payload in `raw_packet` | Reject with `EmptyPayload` error. |
+| UT-102 | `Validator` | Correct envelope structure | Pass validation (Result::Ok). |
+| UT-103 | `Validator` | Sequence gap | Set sequence_continuous flag = false in QualityIndicator. |
 | UT-104 | `Validator` | Duplicate sequence number | Set sequence_continuous flag = false and add warning. |
-| UT-105 | `Enricher` | Valid raw envelope | Stamped receive_timestamp = gateway monotonic clock. |
+| UT-105 | `Enricher` | Valid raw envelope | Stamped receive_timestamp = Gateway system clock. |
 | UT-106 | `Enricher` | Config present in registry | Mission, Satellite, and GroundStation attributes applied correctly. |
-| UT-107 | `SessionManager`| Force-terminate request | Session transitions to `TERMINATED` immediately. |
+| UT-107 | `IngestionOrchestrator`| Source disconnected | Print report, clear session state. |
 
 ---
 
 ## 3. Integration Test Matrix
 
-Integration tests require Docker containers running RabbitMQ and mock gRPC clients to simulate raw telemetry senders.
+Integration tests require Docker containers running RabbitMQ and mock gRPC clients (using Tonic) to simulate raw telemetry senders.
 
 | Test ID | Target Flow | Setup | Verification Steps |
 |---------|-------------|-------|--------------------|
 | IT-201 | gRPC Telemetry Ingest | Spin up gateway, start mock client | Verify mock messages arrive in RabbitMQ `telemetry.raw` queue. |
-| IT-202 | Source Registration | Dynamic register API call | Verify client can establish gRPC stream *only after* registration. |
-| IT-203 | RabbitMQ Recovery | Disconnect RMQ broker during ingestion | Verify gateway buffers messages, then publishes *without loss* after RMQ recovery. |
-| IT-204 | Backpressure | Block RMQ consumer, flood ingress | Verify gateway buffers fill, then gRPC stream throttles / halts client stream. |
+| IT-202 | Static Configuration | Invalid configuration profiles | Verify gateway fails to start / loads static configurations correctly. |
+| IT-203 | RabbitMQ Recovery | Disconnect RMQ broker during ingestion | Verify gateway handles disconnection gracefully and reconnects. |
+| IT-204 | Backpressure | Block RMQ consumer, flood ingress | Verify gRPC stream throttles / halts client stream (TCP/HTTP2 flow control). |
 
 ---
 
 ## 4. Performance Benchmarks
 
-Performance tests are executed using specialized tooling (e.g., custom Go load generator and `k6` for APIs).
+Performance tests are executed using Rust's `criterion` benchmark suite or custom load generator scripts.
+
+| benchmark | tool | purpose |
+|-----------|------|---------|
+| `cargo bench` | `criterion` | Micro-benchmarking processing stages (validation, enrichment, routing) |
+| Heap profiling | `heaptrack` / `valgrind` | Detect allocations and potential leaks in long-running async tasks |
 
 ### 4.1 Stress Test Metrics
 - **Target Load**: 200,000 packets per second (double normal peak load).
 - **Duration**: 2 hours continuous run.
 - **Criteria**:
-  - Max heap memory usage < 1.8 GB.
-  - CPU usage remains steady (no runaway goroutines).
-  - Processing latency P95 < 2 ms.
+  - Max RSS memory usage < 500 MB (Rust is highly memory-efficient).
+  - CPU usage remains steady (no runaway tokio tasks).
+  - Processing latency P95 < 1 ms.
   - Zero dropped messages on network boundaries.
-
-### 4.2 Leak Detection
-- Run `go test -run=None -bench=BenchmarkIngress -memprofile=mem.out` to capture heap allocations.
-- Validate profiles in `pprof` to verify zero memory leaks over long-duration stream ingestion.

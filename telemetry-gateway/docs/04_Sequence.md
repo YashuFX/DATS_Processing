@@ -9,28 +9,14 @@
 
 ---
 
-## 1. Source Registration Flow
+## 1. Source Registration Flow (DEFERRED)
+
+> [!NOTE]
+> In Version 1, dynamic registration is deferred. The gateway uses static configuration profiles (mocked in `IngestionOrchestrator::mock_registration`) to assign mission context, satellite identifiers, and ground station contexts.
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor Operator
-    participant REST as Gateway REST API
-    participant Registry as Source Registry
-    participant Adapter as TelemetrySource Adapter
-
-    Operator->>REST: POST /gateway/register-source (Payload)
-    REST->>Registry: Validate config uniqueness & schema
-    alt Validation Fails
-        Registry-->>REST: Error (Conflict/Invalid)
-        REST-->>Operator: HTTP 400/409 (JSON Error)
-    else Validation Succeeds
-        Registry->>Registry: Persist Source Record
-        Registry->>Adapter: Instantiate source adapter (e.g. GrpcSourceAdapter)
-        Adapter-->>Registry: Ready
-        Registry-->>REST: Source ID
-        REST-->>Operator: HTTP 201 Created (Source ID)
-    end
+    Note over Operator, Gateway: Dynamic source registration is deferred to v2.
 ```
 
 ---
@@ -40,26 +26,34 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Source as Telemetry Source (Replay/Receiver)
-    participant Ingress as Inbound Adapter (gRPC)
-    participant Orch as Ingestion Orchestrator
+    participant Source as Replay Simulator (gRPC Client)
+    participant Ingress as Inbound Adapter (gRPC Server)
+    participant Orch as Ingestion Orchestrator (IngestPort)
+    participant Norm as Normalizer
     participant Val as Validator
     participant Enr as Enricher
+    participant Router as Router
     participant RMQ as RabbitMQ (telemetry.raw)
-    participant Stats as Statistics Aggregator
 
-    Source->>Ingress: StreamTelemetry(TelemetryStreamRequest)
-    Ingress->>Orch: ProcessPacket(envelope)
-    Orch->>Val: Validate(envelope)
-    Val-->>Orch: ValidationResult (pass = true)
-    Orch->>Enr: Enrich(envelope, metadata)
-    Enr->>Enr: Set receive_timestamp, gateway sequence, QualityIndicator
-    Enr-->>Orch: Enriched TelemetryEnvelope
-    Orch->>RMQ: Publish to telemetry.raw (routing: mission.sat.apid.raw)
-    RMQ-->>Orch: Publisher Confirm (ACK)
-    Orch->>Stats: RecordSuccess()
-    Orch-->>Ingress: Stream OK
-    Ingress-->>Source: Stream ack (optional metrics update)
+    Source->>Ingress: StreamTelemetry(stream TelemetryStreamRequest)
+    loop For each packet request in stream
+        Ingress->>Orch: on_packet_received(envelope)
+        Orch->>Norm: normalize(envelope)
+        Orch->>Val: validate(envelope)
+        Val-->>Orch: Validation Ok (Result::Ok)
+        Orch->>Enr: enrich(envelope, registration, seq)
+        Note over Enr: Stamps UUID, receive_timestamp, station context
+        Orch->>Router: build_routing_key(envelope)
+        Router-->>Orch: routing_key (e.g., cy3.sat101.42.raw)
+        Orch->>Enr: set_publish_timestamp(envelope)
+        Orch->>RMQ: publish(envelope, routing_key)
+        RMQ-->>Orch: Confirmation / OK
+        Note over Orch: Increment stats.published
+    end
+    Source->>Ingress: End of Stream (EOF)
+    Ingress->>Orch: on_session_eof(session_id)
+    Note over Orch: Print Replay Verification Report
+    Ingress-->>Source: TelemetryStreamResponse (Stats)
 ```
 
 ---
@@ -69,20 +63,17 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Source as Telemetry Source
-    participant Ingress as Inbound Adapter
+    participant Source as Replay Simulator (gRPC Client)
+    participant Ingress as Inbound Adapter (gRPC Server)
     participant Orch as Ingestion Orchestrator
     participant Val as Validator
-    participant Evt as EventPort (must.events)
-    participant Stats as Statistics Aggregator
 
-    Source->>Ingress: StreamTelemetry(TelemetryStreamRequest)
-    Ingress->>Orch: ProcessPacket(envelope)
-    Orch->>Val: Validate(envelope)
-    Val-->>Orch: ValidationResult (pass = false, reason = "EMPTY_PAYLOAD")
-    Orch->>Evt: Emit(PlatformEvent: "gateway.packet.rejected")
-    Orch->>Stats: RecordFailure(reason)
-    Orch-->>Ingress: Error Response (Rejected packet)
+    Source->>Ingress: StreamTelemetry(stream TelemetryStreamRequest)
+    Ingress->>Orch: on_packet_received(envelope)
+    Orch->>Val: validate(envelope)
+    Val-->>Orch: Err(GatewayError::InvalidPacket)
+    Note over Orch: Increment stats.dropped
+    Orch-->>Ingress: Err(GatewayError)
     Ingress-->>Source: Stream Error/Rejection
 ```
 
@@ -90,48 +81,35 @@ sequenceDiagram
 
 ## 4. Backpressure and Saturated Buffer Flow
 
-When the RabbitMQ client experiences connection lag or high network load, the internal Go channel buffers begin to fill. This triggers backpressure to preserve stability.
+When the RabbitMQ broker experiences connection lag or high network load, Lapin block/wait mechanisms propagate backpressure through the application task loop back to the Tonic streaming stream consumer, forcing the gRPC client to pause.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Source as Telemetry Source
-    participant Ingress as Inbound Adapter
+    participant Source as Replay Simulator
+    participant Ingress as Inbound Adapter (gRPC)
     participant Orch as Ingestion Orchestrator
     participant RMQ as RabbitMQ (telemetry.raw)
-    participant Evt as EventPort (must.events)
 
-    Note over Ingress,RMQ: RabbitMQ connection degrades or rate limit active
-    Orch->>RMQ: Publish
-    RMQ-->>Orch: Delay / No ACK (channel blocked)
-    Note over Orch: Internal Publish Channel saturates
+    Note over Ingress,RMQ: RabbitMQ broker degrades or slows down
+    Orch->>RMQ: publish(envelope, key)
+    Note over RMQ: Lapin blocks/waits on socket write
+    RMQ-->>Orch: Delayed Confirm
+    Note over Orch: Ingestion loop blocks awaiting RabbitMQ publish completion
     Source->>Ingress: Send next packets
-    Ingress->>Orch: ProcessPacket(envelope)
-    Note over Orch: Ingestion Channel exceeds 90% threshold
-    Orch->>Evt: Emit(PlatformEvent: "gateway.queue.full")
-    Orch-->>Ingress: Error (Buffer Saturated)
-    Ingress-->>Source: TCP/gRPC Flow Control (Block/Wait/Pause signal)
-    Note over Source: Source Pauses (ADR-003)
+    Note over Ingress: gRPC window buffer saturates
+    Ingress-->>Source: HTTP/2 Flow Control (WINDOW_UPDATE paused)
+    Note over Source: Source Replay Engine blocks / pauses playback
 ```
 
 ---
 
-## 5. Force-Termination Flow
+## 5. Force-Termination Flow (DEFERRED)
+
+> [!NOTE]
+> Operator-initiated dynamic termination is deferred. In Version 1, the session naturally stops when the gRPC client terminates the connection or sends an EOF.
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor Operator
-    participant REST as Gateway REST API
-    participant Mgr as Session Manager
-    participant Adapter as Inbound Adapter
-    participant Evt as EventPort (must.events)
-
-    Operator->>REST: POST /gateway/stop-session (session_id)
-    REST->>Mgr: RequestStop(session_id)
-    Mgr->>Adapter: Close connection / Stop Stream
-    Adapter-->>Mgr: Confirmed Closed
-    Mgr->>Evt: Emit(PlatformEvent: "gateway.session.finished")
-    Mgr-->>REST: OK
-    REST-->>Operator: HTTP 200 OK
+    Note over Operator, Gateway: Force termination is deferred to v2.
 ```
