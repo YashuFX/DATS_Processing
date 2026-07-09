@@ -30,7 +30,7 @@ graph LR
     
     subgraph "RabbitMQ"
         EX_RAW["telemetry.raw<br/>(topic exchange)"]
-        EX_CCSDS["telemetry.ccsds<br/>(topic exchange)"]
+        EX_DECODED["telemetry.decoded<br/>(topic exchange)"]
         EX_ENG["telemetry.engineering<br/>(topic exchange)"]
         EX_EVENTS["must.events<br/>(topic exchange)"]
         EX_ALARM["telemetry.alarm<br/>(topic exchange)"]
@@ -63,9 +63,9 @@ graph LR
     
     EX_RAW --> Q_CCSDS
     CCSDS_SVC --> Q_CCSDS
-    CCSDS_SVC --> EX_CCSDS
+    CCSDS_SVC --> EX_DECODED
     
-    EX_CCSDS --> Q_XTCE
+    EX_DECODED --> Q_XTCE
     XTCE_SVC --> Q_XTCE
     XTCE_SVC --> EX_ENG
     
@@ -97,7 +97,7 @@ All exchanges use the **topic** type. Topic exchanges enable flexible routing vi
 | Exchange | Type | Durable | Description |
 |----------|------|---------|-------------|
 | `telemetry.raw` | topic | yes | Raw telemetry packets from sources (Replay, Receiver) |
-| `telemetry.ccsds` | topic | yes | CCSDS-decoded packets (headers parsed) |
+| `telemetry.decoded` | topic | yes | CCSDS-decoded packets (headers parsed) |
 | `telemetry.engineering` | topic | yes | Engineering-valued packets (parameters extracted) |
 | `telemetry.alarm` | topic | yes | Out-of-limit / alarm notifications |
 | `telemetry.validated` | topic | yes | Limit-checked, quality-assessed packets |
@@ -118,16 +118,16 @@ All exchanges use the **topic** type. Topic exchanges enable flexible routing vi
 | Segment | Example | Source |
 |---------|---------|--------|
 | mission_code | `cy3` | MissionIdentifier.mission_code (lowercase) |
-| satellite_id | `sat01` | SatelliteIdentifier.satellite_id (prefixed) |
-| apid | `0064` | APID zero-padded to 4 digits |
+| satellite_id | `sat101` | SatelliteIdentifier.satellite_id (no zero-padding, e.g. sat1, sat101) |
+| apid | `42` | APID (no zero-padding) |
 | stage | `raw` | ProcessingStage name (lowercase) |
 
 **Examples:**
 ```
-cy3.sat01.0064.raw              # Chandrayaan-3, Satellite 01, APID 64, raw stage
-cy3.sat01.0064.ccsds_decoded    # Same packet after CCSDS decode
-cy3.sat01.0064.engineering      # Same packet after XTCE processing
-cy3.sat01.*.raw                 # All APIDs from Sat01, raw (wildcard binding)
+cy3.sat101.42.raw              # Chandrayaan-3, Satellite 101, APID 42, raw stage
+cy3.sat101.42.decoded          # Same packet after CCSDS decode
+cy3.sat101.42.engineering      # Same packet after XTCE processing
+cy3.sat101.*.raw                 # All APIDs from Sat101, raw (wildcard binding)
 cy3.#                           # Everything from Chandrayaan-3 mission
 #.raw                           # All raw packets from all missions
 ```
@@ -174,7 +174,7 @@ fn build_routing_key(envelope: &TelemetryEnvelope) -> String {
 |-------|-----------------|-------------------|---------|----------|---------|
 | `gateway.ingest` | `telemetry.raw` | `#.raw` | yes | 100 | Telemetry Gateway |
 | `ccsds.decode` | `telemetry.raw` | `#.raw` | yes | 50 | CCSDS Service |
-| `xtce.process` | `telemetry.ccsds` | `#.ccsds_decoded` | yes | 50 | XTCE Service |
+| `xtce.process` | `telemetry.decoded` | `#.decoded` | yes | 50 | XTCE Service |
 | `validation.check` | `telemetry.engineering` | `#.engineering` | yes | 100 | Validation Service |
 | `archive.store.raw` | `telemetry.raw` | `#.raw` | yes | 200 | Archive Service (raw) |
 | `archive.store.eng` | `telemetry.engineering` | `#.engineering` | yes | 200 | Archive Service (eng) |
@@ -200,7 +200,7 @@ fn build_routing_key(envelope: &TelemetryEnvelope) -> String {
                                     └──────────┬───────────┘
                                                │
                                     publish to telemetry.raw
-                                    key: cy3.sat01.0064.raw
+                                    key: cy3.sat101.42.raw
                                                │
                               ┌────────────────┼────────────────┐
                               │                │                │
@@ -210,8 +210,8 @@ fn build_routing_key(envelope: &TelemetryEnvelope) -> String {
                     │  (ingest)   │  │ (decode)    │  │ (raw store)  │
                     └─────────────┘  └──────┬──────┘  └──────────────┘
                                             │
-                                 publish to telemetry.ccsds
-                                 key: cy3.sat01.0064.ccsds_decoded
+                                 publish to telemetry.decoded
+                                 key: cy3.sat101.42.decoded
                                             │
                                             ▼
                                   ┌─────────────────┐
@@ -245,7 +245,7 @@ fn build_routing_key(envelope: &TelemetryEnvelope) -> String {
 | Step | Producer | Exchange | Consumer(s) | Key Stage Suffix |
 |------|----------|----------|-------------|-----------------|
 | 1 | Replay Simulator | `telemetry.raw` | Gateway, CCSDS, Archive | `.raw` |
-| 2 | CCSDS Service | `telemetry.ccsds` | XTCE | `.ccsds_decoded` |
+| 2 | CCSDS Service | `telemetry.decoded` | XTCE | `.decoded` |
 | 3 | XTCE Service | `telemetry.engineering` | Validation, Dashboard, Archive | `.engineering` |
 | 4 | Validation Service | `telemetry.alarm` | Alarm Service | `.alarm` |
 
@@ -312,7 +312,7 @@ Attempt 4: Dead letter
 | Exchange | Expected Volume | Peak Volume |
 |----------|----------------|-------------|
 | `telemetry.raw` | 3,000 msg/s per source | 100,000 msg/s (32x replay) |
-| `telemetry.ccsds` | 3,000 msg/s | 100,000 msg/s |
+| `telemetry.decoded` | 3,000 msg/s | 100,000 msg/s |
 | `telemetry.engineering` | 3,000 msg/s | 100,000 msg/s |
 | `must.events` | 10 msg/s | 100 msg/s |
 

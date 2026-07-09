@@ -33,7 +33,7 @@ graph TB
         RCV["Live Receiver<br/>(production)"]
         GW["Telemetry Gateway"]
         RMQ["RabbitMQ Bus"]
-        CCSDS["CCSDS Service"]
+        CCSDS["CCSDS Decoder Service"]
         XTCE["XTCE Service"]
         VALID["Validation Service"]
         ALARM["Alarm Service"]
@@ -51,9 +51,9 @@ graph TB
     SAT2 -.->|RF| ANT2
     ANT1 --> RCV
     ANT2 --> RCV
-    RSS --> RMQ
-    RCV --> RMQ
-    RMQ --> GW
+    RSS -->|gRPC| GW
+    RCV -->|gRPC| GW
+    GW --> RMQ
     RMQ --> CCSDS
     CCSDS --> RMQ
     RMQ --> XTCE
@@ -74,10 +74,10 @@ graph TB
 
 | Service | Language | Purpose | Status |
 |---------|----------|---------|--------|
-| **Replay Simulator** | Rust | Replay recorded telemetry files | Spec complete |
+| **Replay Simulator** | Rust | Replay recorded telemetry files | Implemented (Version 1) |
 | **Live Receiver** | Rust | Receive live telemetry from antenna | Planned (v2) |
-| **Telemetry Gateway** | Rust | Ingress validation, mission routing, envelope stamping | Needs spec |
-| **CCSDS Service** | Rust | Parse CCSDS packet headers, extract TM parameters | Needs spec |
+| **Telemetry Gateway** | Rust | Ingress validation, mission routing, envelope stamping | Implemented (Version 1) |
+| **CCSDS Decoder Service** | Rust | Parse CCSDS packet headers, extract TM parameters | Implemented (Version 1) |
 | **XTCE Service** | Rust/Python | Apply XTCE database, calibrate engineering values | Needs spec |
 | **Validation Service** | Rust | Check limits, flag anomalies, quality assessment | Needs spec |
 | **Alarm Service** | Rust | Limit breach notifications, alarm history | Needs spec |
@@ -95,50 +95,54 @@ graph TB
 
 ### 3.1 Telemetry Pipeline (Data Plane)
 
-```
 ┌─────────────────┐
-│ Replay Simulator│─── publishes ──┐
-│ (or Receiver)   │                │
-└─────────────────┘                │
-                                   ▼
+│ Replay Simulator│
+│ (or Receiver)   │
+└────────┬────────┘
+         │
+    streams gRPC
+         │
+         ▼
+┌─────────────────┐
+│Telemetry Gateway│─── publishes ──┐
+│ (validate, stamp)│                │
+└─────────────────┘                ▼
                           telemetry.raw exchange
                                    │
-                    ┌──────────────┼──────────────┐
-                    │              │              │
-                    ▼              ▼              ▼
-          ┌──────────────┐ ┌────────────┐ ┌────────────┐
-          │   Gateway    │ │ CCSDS Svc  │ │ Archive    │
-          │  (validate,  │ │ (parse     │ │ (store raw)│
-          │   enrich)    │ │  headers)  │ │            │
-          └──────────────┘ └─────┬──────┘ └────────────┘
-                                 │
-                        telemetry.ccsds exchange
-                                 │
-                                 ▼
-                       ┌─────────────────┐
-                       │   XTCE Service   │
-                       │  (calibrate,     │
-                       │   decommutate)   │
-                       └────────┬────────┘
-                                │
-                     telemetry.engineering exchange
-                                │
-                   ┌────────────┼────────────┐
-                   │            │            │
-                   ▼            ▼            ▼
-          ┌─────────────┐ ┌──────────┐ ┌──────────┐
-          │ Validation  │ │Dashboard │ │ Archive  │
-          │ (limits)    │ │(display) │ │(store eng│
-          └──────┬──────┘ └──────────┘ └──────────┘
-                 │
-       telemetry.alarm exchange
-                 │
-                 ▼
-          ┌────────────┐
-          │ Alarm Svc  │
-          │ (notify)   │
-          └────────────┘
-```
+                    ┌──────────────┴──────────────┐
+                    │                             │
+                    ▼                             ▼
+             ┌────────────┐                ┌────────────┐
+             │ CCSDS Dec  │                │ Archive    │
+             │ (parse hdr)│                │ (store raw)│
+             └─────┬──────┘                └────────────┘
+                   │
+         telemetry.decoded exchange
+                   │
+                   ▼
+         ┌──────────────────┐
+         │   XTCE Service   │
+         │  (calibrate,     │
+         │   decommutate)   │
+         └─────────┬────────┘
+                   │
+        telemetry.engineering exchange
+                   │
+      ┌────────────┴────────────┐
+      │            │            │
+      ▼            ▼            ▼
+┌─────────────┐ ┌──────────┐ ┌──────────┐
+│ Validation  │ │Dashboard │ │ Archive  │
+│ (limits)    │ │(display) │ │(store eng│
+└──────┬──────┘ └──────────┘ └──────────┘
+       │
+telemetry.alarm exchange
+       │
+       ▼
+┌────────────┐
+│ Alarm Svc  │
+│ (notify)   │
+└────────────┘
 
 ### 3.2 Control Plane
 
@@ -159,40 +163,38 @@ graph LR
 
 ## 4. Service Responsibilities
 
-### 4.1 Replay Simulator Service (Specified)
+### 4.1 Replay Simulator Service (Specified & Implemented)
 
 **Input:** Telemetry files (binary, CCSDS)
-**Output:** `TelemetryEnvelope` on `telemetry.raw` exchange
+**Output:** gRPC stream of `TelemetryEnvelope` messages to Telemetry Gateway
 **Responsibility:** Read files, preserve timing, publish packets as if live
 
 (Full specification in `simulator-engine/docs/`)
 
-### 4.2 Telemetry Gateway (Needs Spec)
+### 4.2 Telemetry Gateway (Specified & Implemented)
 
-**Input:** `TelemetryEnvelope` from `telemetry.raw`
-**Output:** Validated, enriched `TelemetryEnvelope` (re-published to `telemetry.raw`)
+**Input:** gRPC stream of `TelemetryEnvelope` messages from Replay Simulator / Live Receiver
+**Output:** Validated, enriched `TelemetryEnvelope` published to `telemetry.raw` exchange
 **Responsibility:**
 
 | Function | Description | Why |
 |----------|-------------|-----|
 | Ingress validation | Verify envelope completeness, reject malformed | First line of defense |
 | Mission routing | Resolve mission/satellite from source config | Source may not know mission context |
-| Deduplication | Detect duplicate packets (by envelope_id) | Multi-station reception produces duplicates |
 | Rate monitoring | Track packet rates per source | Detect source anomalies |
 | Envelope stamping | Set receive_timestamp, station info | Centralized timestamp authority |
 
-### 4.3 CCSDS Service (Needs Spec)
+### 4.3 CCSDS Decoder Service (Specified & Implemented)
 
-**Input:** `TelemetryEnvelope` from `telemetry.raw`
-**Output:** `TelemetryEnvelope` with parsed `ccsds_header` on `telemetry.ccsds`
+**Input:** `TelemetryEnvelope` from `telemetry.raw` exchange
+**Output:** `TelemetryEnvelope` with parsed `ccsds_header` on `telemetry.decoded` exchange
 **Responsibility:**
 
 | Function | Description | Why |
 |----------|-------------|-----|
 | Header parsing | Parse 6-byte CCSDS primary header | Downstream needs APID, sequence count |
-| Secondary header | Parse time-code field | Extract onboard timestamp |
-| Sequence validation | Detect gaps in per-APID sequence | Packet loss detection |
-| Segmentation | Reassemble segmented packets | Some TM parameters span multiple packets |
+| Secondary header | Parse time-code field (CUC) | Extract onboard timestamp |
+| Sequence validation | Detect gaps/duplicates in per-APID sequence | Packet loss and anomaly detection |
 | Quality update | Set crc_ok, sequence_continuous flags | Progressive quality assessment |
 
 ### 4.4 XTCE Service (Needs Spec)
@@ -297,7 +299,7 @@ Every service MUST:
 
 ## 6. Development Roadmap
 
-### Phase 1: Foundation (Current)
+### Phase 1: Foundation (Complete)
 
 | Deliverable | Status |
 |-------------|--------|
@@ -306,13 +308,13 @@ Every service MUST:
 | Message Bus Design | ✅ Complete |
 | System Architecture | ✅ Complete |
 | Replay Simulator Spec | ✅ Complete |
+| Telemetry Gateway Spec | ✅ Complete |
+| CCSDS Decoder Spec | ✅ Complete |
 
 ### Phase 2: Remaining Service Specs (Next)
 
 | Deliverable | Status |
 |-------------|--------|
-| Telemetry Gateway Spec | ❌ Needs spec |
-| CCSDS Service Spec | ❌ Needs spec |
 | XTCE Service Spec | ❌ Needs spec |
 | Validation Service Spec | ❌ Needs spec |
 | Alarm Service Spec | ❌ Needs spec |
@@ -321,21 +323,22 @@ Every service MUST:
 
 ### Phase 3: Implementation
 
-| Deliverable | Dependencies |
-|-------------|-------------|
-| Shared proto package | Phase 1 contracts |
-| Replay Simulator impl | Shared proto, bus design |
-| CCSDS Service impl | Shared proto, bus design |
-| XTCE Service impl | Shared proto, CCSDS |
-| Remaining services | Respective specs |
+| Deliverable | Dependencies | Status |
+|-------------|-------------|--------|
+| Shared proto package | Phase 1 contracts | ✅ Complete |
+| Replay Simulator impl | Shared proto | ✅ Complete (v1) |
+| Telemetry Gateway impl | Shared proto, gRPC | ✅ Complete (v1) |
+| CCSDS Decoder impl | Shared proto, bus design | ✅ Complete (v1) |
+| XTCE Service impl | Shared proto, CCSDS | ❌ Planned |
+| Remaining services | Respective specs | ❌ Planned |
 
 ### Phase 4: Integration
 
-| Deliverable | Dependencies |
-|-------------|-------------|
-| End-to-end pipeline test | All core services |
-| Live receiver integration | Replay → Receiver swap |
-| Dashboard integration | All engineering data flowing |
+| Deliverable | Dependencies | Status |
+|-------------|-------------|--------|
+| End-to-end pipeline test | Core services (Sim -> GW -> Decoder) | ✅ Complete (v1) |
+| Live receiver integration | Replay → Receiver swap | ❌ Planned |
+| Dashboard integration | All engineering data flowing | ❌ Planned |
 
 ---
 
