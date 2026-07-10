@@ -157,17 +157,21 @@ impl XtceRegistry {
         let mut parameter_sizes = HashMap::new();
 
         for (pname, type_ref) in raw_params {
-            if let Some((ptype, calibrator, size)) = types.get(&type_ref) {
-                parameters.insert(
-                    pname.clone(),
-                    Parameter {
-                        name: pname.clone(),
-                        param_type: ptype.clone(),
-                        calibrator: calibrator.clone(),
-                    },
-                );
-                parameter_sizes.insert(pname, *size);
-            }
+            let (ptype, calibrator, size) = types.get(&type_ref).ok_or_else(|| {
+                XtceError::XmlValidationError(format!(
+                    "ParameterTypeRef '{}' for Parameter '{}' is missing in ParameterTypeSet",
+                    type_ref, pname
+                ))
+            })?;
+            parameters.insert(
+                pname.clone(),
+                Parameter {
+                    name: pname.clone(),
+                    param_type: ptype.clone(),
+                    calibrator: calibrator.clone(),
+                },
+            );
+            parameter_sizes.insert(pname, *size);
         }
 
         // 4. Parse Containers & Calculate Absolute Bit Offsets
@@ -218,7 +222,12 @@ impl XtceRegistry {
                                 running_offset = offset_str.parse::<usize>().unwrap_or(running_offset);
                             }
 
-                            let length_bits = *parameter_sizes.get(param_ref).unwrap_or(&0);
+                            let length_bits = *parameter_sizes.get(param_ref).ok_or_else(|| {
+                                XtceError::XmlValidationError(format!(
+                                    "Parameter '{}' referenced in container is missing in ParameterSet",
+                                    param_ref
+                                ))
+                            })?;
                             
                             entries.push(Entry {
                                 parameter_name: param_ref.to_string(),
@@ -415,5 +424,79 @@ mod tests {
         assert_eq!(container.entries[2].parameter_name, "Status");
         assert_eq!(container.entries[2].start_offset_bits, 20);
         assert_eq!(container.entries[2].length_bits, 4);
+    }
+
+    #[test]
+    fn test_large_xml_loading() {
+        let mut xml = String::new();
+        xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<SpaceSystem xmlns=\"http://www.omg.org/space/xtce\" name=\"LargeSystem\">\n  <TelemetryMetadata>\n    <ParameterSet>\n");
+        for i in 0..2000 {
+            xml.push_str(&format!("      <Parameter name=\"Param_{i}\" parameterTypeRef=\"IntType\"/>\n"));
+        }
+        xml.push_str("      <ParameterTypeSet>\n        <IntegerParameterType name=\"IntType\" signed=\"false\">\n          <IntegerDataEncoding sizeInBits=\"8\"/>\n        </IntegerParameterType>\n      </ParameterTypeSet>\n    </ParameterSet>\n  </TelemetryMetadata>\n</SpaceSystem>");
+
+        let start = std::time::Instant::now();
+        let db = XtceRegistry::parse_xtce("large", &xml).unwrap();
+        let duration = start.elapsed();
+        
+        assert_eq!(db.mission_code, "large");
+        assert_eq!(db.parameters.len(), 2000);
+        for i in 0..2000 {
+            let name = format!("Param_{i}");
+            assert!(db.parameters.contains_key(&name));
+        }
+        println!("Parsed 2000 parameters in: {:?}", duration);
+    }
+
+    #[test]
+    fn test_bad_xml_validation() {
+        // Missing parameter type definition
+        let bad_xml1 = r#"<?xml version="1.0" encoding="UTF-8"?>
+<SpaceSystem xmlns="http://www.omg.org/space/xtce" name="Bad">
+  <TelemetryMetadata>
+    <ParameterSet>
+      <Parameter name="Volt" parameterTypeRef="NonExistentType"/>
+    </ParameterSet>
+  </TelemetryMetadata>
+</SpaceSystem>"#;
+        let res = XtceRegistry::parse_xtce("bad1", bad_xml1);
+        assert!(res.is_err());
+
+        // Malformed XML syntax
+        let bad_xml2 = r#"<SpaceSystem name="Bad""#;
+        let res2 = XtceRegistry::parse_xtce("bad2", bad_xml2);
+        assert!(res2.is_err());
+    }
+
+    #[test]
+    fn test_multiple_missions_retrieval() {
+        let dir_name = format!("./temp_test_missions_{}", std::process::id());
+        std::fs::create_dir_all(&dir_name).unwrap();
+
+        std::fs::write(format!("{dir_name}/CY3.xml"), TEST_XTCE).unwrap();
+        std::fs::write(format!("{dir_name}/MOM.xml"), TEST_XTCE).unwrap();
+        std::fs::write(format!("{dir_name}/GSAT.xml"), TEST_XTCE).unwrap();
+
+        let registry = XtceRegistry::new(dir_name.clone());
+
+        // Fetch each database and verify it selects the correct file and builds the cache
+        let db_cy3 = registry.get_db("CY3").unwrap();
+        assert_eq!(db_cy3.mission_code, "CY3");
+
+        let db_mom = registry.get_db("MOM").unwrap();
+        assert_eq!(db_mom.mission_code, "MOM");
+
+        let db_gsat = registry.get_db("GSAT").unwrap();
+        assert_eq!(db_gsat.mission_code, "GSAT");
+
+        // Verify cache contains all three
+        {
+            let cache = registry.cache.read().unwrap();
+            assert!(cache.contains_key("CY3"));
+            assert!(cache.contains_key("MOM"));
+            assert!(cache.contains_key("GSAT"));
+        }
+
+        std::fs::remove_dir_all(&dir_name).unwrap();
     }
 }

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SpaceSystem xmlns="http://www.omg.org/space/xtce" name="Chandrayaan-3">
+  <TelemetryMetadata>
+    <ParameterSet>
+      <Parameter name="Volt" parameterTypeRef="VoltType"/>
+      <Parameter name="Temp" parameterTypeRef="TempType"/>
+      <Parameter name="Status" parameterTypeRef="StatusType"/>
+
+      <ParameterTypeSet>
+        <IntegerParameterType name="VoltType" signed="false">
+          <IntegerDataEncoding sizeInBits="8"/>
+          <DefaultCalibrator>
+            <PolynomialCalibrator>
+              <Term coefficient="0.5" exponent="1"/>
+            </PolynomialCalibrator>
+          </DefaultCalibrator>
+        </IntegerParameterType>
+
+        <IntegerParameterType name="TempType" signed="true">
+          <IntegerDataEncoding sizeInBits="8"/>
+          <DefaultCalibrator>
+            <SplineCalibrator>
+              <SplinePoint raw="-100" calibrated="-50.0"/>
+              <SplinePoint raw="0" calibrated="0.0"/>
+              <SplinePoint raw="100" calibrated="50.0"/>
+            </SplineCalibrator>
+          </DefaultCalibrator>
+        </IntegerParameterType>
+
+        <IntegerParameterType name="StatusType" signed="false">
+          <IntegerDataEncoding sizeInBits="8"/>
+          <DefaultCalibrator>
+            <StateCalibrator>
+              <State value="0" label="FAIL"/>
+              <State value="170" label="HEALTHY"/>
+            </StateCalibrator>
+          </DefaultCalibrator>
+        </IntegerParameterType>
+      </ParameterTypeSet>
+    </ParameterSet>
+
+    <ContainerSet>
+      <!-- SequenceContainer apid is 42. Since the payload passed contains the CCSDS primary header (6 bytes), 
+           our entry offsets start at 48 bits. -->
+      <SequenceContainer name="PropulsionModulePacket" apid="42">
+        <EntryList>
+          <ParameterRefEntry parameterRef="Volt"/>
+          <ParameterRefEntry parameterRef="Temp"/>
+          <ParameterRefEntry parameterRef="Status"/>
+        </EntryList>
+      </SequenceContainer>
+    </ContainerSet>
+  </TelemetryMetadata>
+</SpaceSystem>

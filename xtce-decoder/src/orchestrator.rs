@@ -34,7 +34,7 @@ impl DecoderOrchestrator {
         }
     }
 
-    /// Entry point to start consuming and decommutating messages.
+    /// Entry point to start consuming and decommutating messages with auto-reconnection.
     pub async fn start(&self) -> Result<(), XtceError> {
         let orchestrator = Arc::new(self.clone_refs());
         
@@ -48,7 +48,17 @@ impl DecoderOrchestrator {
         });
 
         tracing::info!("Starting XTCE Decoder Orchestrator consumer loop...");
-        self.consumer.start(handler).await
+        loop {
+            match self.consumer.start(handler.clone()).await {
+                Ok(_) => {
+                    tracing::warn!("AMQP consumer connection closed cleanly. Reconnecting in 5 seconds...");
+                }
+                Err(e) => {
+                    tracing::error!("AMQP consumer error: {:?}. Reconnecting in 5 seconds...", e);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
     }
 
     fn clone_refs(&self) -> Self {
@@ -182,6 +192,14 @@ impl DecoderOrchestrator {
             acker.nack().await;
             return Err(pub_err);
         }
+
+        tracing::info!(
+            "[XTCE ✓] Decoded parameters for EnvID={} | Mission={} | APID={} | Params={:?}",
+            envelope_id,
+            mission_code,
+            apid,
+            envelope.parameters
+        );
 
         // 10. Acknowledge receipt
         acker.ack().await;
@@ -367,5 +385,90 @@ mod tests {
         assert_eq!(status.raw_value.as_ref().unwrap().value, Some(Value::IntValue(1)));
         assert_eq!(status.engineering_value.as_ref().unwrap().value, Some(Value::StringValue("ON".to_string())));
         assert_eq!(status.validity, ParameterValidity::Valid as i32);
+    }
+
+    #[tokio::test]
+    async fn test_load_and_leak_benchmark() {
+        let config = Arc::new(AppConfig::from_env().unwrap_or_else(|_| {
+            std::env::set_var("AMQP_URL", "amqp://test");
+            AppConfig::from_env().unwrap()
+        }));
+        
+        let registry = Arc::new(XtceRegistry::new("".to_string()));
+        let db = XtceRegistry::parse_xtce("test", TEST_XTCE).unwrap();
+        {
+            let mut cache = registry.cache.write().unwrap();
+            cache.insert("test".to_string(), Arc::new(db));
+        }
+
+        let consumer = Arc::new(FakeConsumer);
+        struct NoopPublisher;
+        #[async_trait::async_trait]
+        impl EngineeringPublisher for NoopPublisher {
+            async fn publish(&self, _envelope: &TelemetryEnvelope, _routing_key: &str) -> Result<(), XtceError> {
+                Ok(())
+            }
+        }
+        let publisher = Arc::new(NoopPublisher);
+        let alert_port = Arc::new(FakeAlertPort);
+
+        let orchestrator = DecoderOrchestrator::new(
+            config,
+            registry,
+            consumer,
+            publisher,
+            alert_port,
+        );
+
+        let mut envelope = TelemetryEnvelope::default();
+        envelope.envelope_id = "test-uuid".to_string();
+        envelope.mission = Some(MissionIdentifier {
+            mission_id: 200,
+            mission_code: "test".to_string(),
+            mission_name: "Test Mission".to_string(),
+        });
+        envelope.satellite = Some(SatelliteIdentifier {
+            satellite_id: 101,
+            satellite_name: "Test Sat".to_string(),
+            norad_id: 0,
+        });
+        envelope.apid = 42;
+        envelope.raw_packet = Some(RawTelemetryPacket {
+            data: vec![0b1010_1100, 0b0011_1111, 0b1111_0001],
+            data_length: 3,
+            receive_time: None,
+            file_offset: 0,
+        });
+
+        let mut raw_envelope_bytes = Vec::new();
+        envelope.encode(&mut raw_envelope_bytes).unwrap();
+
+        // Warm up
+        for _ in 0..10 {
+            orchestrator
+                .process_message(raw_envelope_bytes.clone(), "test.routing".to_string(), DeliveryAcker::noop())
+                .await
+                .unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        let iterations = 100_000;
+        
+        for _ in 0..iterations {
+            orchestrator
+                .process_message(raw_envelope_bytes.clone(), "test.routing".to_string(), DeliveryAcker::noop())
+                .await
+                .unwrap();
+        }
+
+        let elapsed = start.elapsed();
+        let throughput = (iterations as f64) / elapsed.as_secs_f64();
+        let latency_us = (elapsed.as_micros() as f64) / (iterations as f64);
+        
+        println!(
+            "\n[BENCHMARK] Processed {iterations} packets in {elapsed:?}. Throughput: {throughput:.2} packets/sec. Avg Latency: {latency_us:.3} µs/packet\n"
+        );
+        
+        assert!(throughput > 10000.0);
     }
 }

@@ -195,4 +195,40 @@ mod tests {
         let val2 = extract_int(&buffer2, 0, 8).unwrap();
         assert_eq!(val2, 15);
     }
+
+    #[test]
+    fn test_complex_cross_byte_boundaries() {
+        let buffer = [0b1010_1100, 0b0011_1111, 0b1100_0000];
+        
+        // 1. 3-bit uint starting at offset 5: expected 4
+        let val1 = extract_uint(&buffer, 5, 3).unwrap();
+        assert_eq!(val1, 4);
+
+        // 2. 5-bit uint starting at offset 8: expected 7
+        let val2 = extract_uint(&buffer, 8, 5).unwrap();
+        assert_eq!(val2, 7);
+
+        // 3. 11-bit uint starting at offset 13: expected 1984
+        let val3 = extract_uint(&buffer, 13, 11).unwrap();
+        assert_eq!(val3, 1984);
+
+        // 4. 17-bit uint starting at offset 3: expected 50172
+        let val4 = extract_uint(&buffer, 3, 17).unwrap();
+        assert_eq!(val4, 50172);
+    }
+
+    #[test]
+    fn test_malformed_payload_underflow() {
+        let buffer = [0b1010_1100]; // Only 1 byte (8 bits)
+        
+        // Requesting 12 bits from offset 0 should fail with Buffer underflow
+        let res = extract_uint(&buffer, 0, 12);
+        assert!(res.is_err());
+        match res {
+            Err(XtceError::DecommutationFailed(msg)) => {
+                assert!(msg.contains("Buffer underflow"));
+            }
+            _ => panic!("Expected DecommutationFailed error"),
+        }
+    }
 }
