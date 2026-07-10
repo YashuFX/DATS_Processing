@@ -24,6 +24,7 @@ message TelemetryEnvelope {
   ProcessingStage stage = 15;
   map<string, string> annotations = 16;
   QualityIndicator quality = 17;
+  repeated TelemetryParameter parameters = 18;
 }
 
 enum ProcessingStage {
@@ -42,4 +43,29 @@ message QualityIndicator {
   bool timestamp_monotonic = 3;
   bool sequence_continuous = 4;
   repeated string warnings = 5;
+}
+
+message TelemetryParameter {
+  string name = 1;
+  ParameterValue raw_value = 2;
+  ParameterValue engineering_value = 3;
+  ParameterValidity validity = 4;
+}
+
+message ParameterValue {
+  oneof value {
+    int64 int_value = 1;
+    double float_value = 2;
+    string string_value = 3;
+    bool bool_value = 4;
+    bytes bytes_value = 5;
+  }
+}
+
+enum ParameterValidity {
+  PARAMETER_VALIDITY_UNSPECIFIED = 0;
+  PARAMETER_VALIDITY_VALID = 1;
+  PARAMETER_VALIDITY_INVALID = 2;
+  PARAMETER_VALIDITY_STALE = 3;
+  PARAMETER_VALIDITY_OUT_OF_LIMITS = 4;
 }

@@ -91,6 +91,7 @@ impl EnvelopeBuilder {
         TelemetryEnvelope {
             envelope_id,
             sequence_number: packet.sequence_number,
+            parameters: Vec::new(),
 
             // Source identity
             source: Some(SourceIdentifier {
