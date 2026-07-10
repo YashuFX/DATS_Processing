@@ -1,0 +1,47 @@
+[package]
+name = "engineering-conversion-service"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "engineering-conversion-service"
+path = "src/main.rs"
+
+[[bin]]
+name = "publish-decommutated-envelope"
+path = "tools/publish_decommutated_envelope.rs"
+
+[[bin]]
+name = "consume-engineering-envelope"
+path = "tools/consume_engineering_envelope.rs"
+
+[dependencies]
+# Concurrency and Async
+tokio = { version = "1.38", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Serialization & Protocols
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+prost = "0.12"
+uuid = { version = "1.8", features = ["v4"] }
+
+# Message Bus (RabbitMQ)
+lapin = "2.3"
+amq-protocol = "7.0"
+
+# Math & Logic Expression Evaluation
+evalexpr = "11.3"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+metrics = "0.22"
+metrics-exporter-prometheus = "0.15"
+
+# Error handling
+thiserror = "1.0"
+
+[build-dependencies]
+tonic-build = "0.11"
