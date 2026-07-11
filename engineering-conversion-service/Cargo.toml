@@ -15,6 +15,10 @@ path = "tools/publish_decommutated_envelope.rs"
 name = "consume-engineering-envelope"
 path = "tools/consume_engineering_envelope.rs"
 
+[[bin]]
+name = "verification-sink"
+path = "tools/verification_sink.rs"
+
 [dependencies]
 # Concurrency and Async
 tokio = { version = "1.38", features = ["full"] }
